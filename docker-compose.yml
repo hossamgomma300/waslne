@@ -1,0 +1,106 @@
+version: '3.8'
+
+services:
+  # Waslne Application
+  app:
+    build: .
+    container_name: waslne_app
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./storage:/var/www/html/storage
+      - ./public/uploads:/var/www/html/public/uploads
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - waslne_network
+
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: waslne_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: waslne
+      MYSQL_USER: waslne_user
+      MYSQL_PASSWORD: waslne_password
+      MYSQL_ROOT_PASSWORD: root_password
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "3306:3306"
+    networks:
+      - waslne_network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: waslne_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - waslne_network
+
+  # Queue Worker
+  queue:
+    build: .
+    container_name: waslne_queue
+    restart: unless-stopped
+    command: php artisan queue:work --sleep=3 --tries=3 --max-time=3600
+    volumes:
+      - ./storage:/var/www/html/storage
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - waslne_network
+
+  # Scheduler
+  scheduler:
+    build: .
+    container_name: waslne_scheduler
+    restart: unless-stopped
+    command: sh -c "while true; do php artisan schedule:run; sleep 60; done"
+    volumes:
+      - ./storage:/var/www/html/storage
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - waslne_network
+
+  # Nginx Load Balancer (Optional)
+  nginx:
+    image: nginx:alpine
+    container_name: waslne_nginx
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./docker/nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - app
+    networks:
+      - waslne_network
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  waslne_network:
+    driver: bridge
